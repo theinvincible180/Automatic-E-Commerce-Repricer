@@ -7,21 +7,29 @@ load_dotenv()
 conn = psycopg2.connect(os.getenv("DATABASE_URL"))
 cur = conn.cursor()
 
-cur.execute("""
-    INSERT INTO products(name, sku, competitor_url, our_cost, min_margin_percent, max_price, current_price)
-    VALUES (%s, %s, %s, %s, %s, %s, %s)
-""",(
-    "Wireless Mouse X1",
-    "WM-X1-001",
-    "https://example.com/product/wireless-mouse-x1",
-    15.00,    
-    20.00,    
-    45.00,    
-    29.99
-))
+# First get the product id of our test product
+cur.execute("SELECT id FROM products WHERE sku = %s", ("WM-X1-001",))
+product = cur.fetchone()
 
-conn.commit()
-print("Product inserted successfully.")
+if product:
+    product_id = product[0]
 
-conn.close()
+    # Insert multiple competitor URLs for the same product
+    competitors = [
+        (product_id, "books_to_scrape_1", "http://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html"),
+        (product_id, "books_to_scrape_2", "http://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html"),
+        (product_id, "books_to_scrape_3", "http://books.toscrape.com/catalogue/soumission_998/index.html"),
+    ]
+
+    cur.executemany("""
+        INSERT INTO competitor_urls (product_id, competitor_name, url)
+        VALUES (%s, %s, %s)
+    """, competitors)
+
+    conn.commit()
+    print(f"Inserted {len(competitors)} competitor URLs for product_id {product_id}.")
+else:
+    print("Product not found.")
+
 cur.close()
+conn.close()
