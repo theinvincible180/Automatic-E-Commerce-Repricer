@@ -55,3 +55,4 @@ export const streamPipeline = (onMessage, onDone, onError) => {
 };
 
 export default api;
+export const getPipelineLogs = () => api.get("/pipeline/logs");

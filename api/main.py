@@ -1,11 +1,20 @@
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from api.scheduler import start_scheduler, stop_scheduler
 from fastapi.middleware.cors import CORSMiddleware
 from api.routers import products, prices, pipeline
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+    stop_scheduler()
 
 app = FastAPI(
     title="Repricer Agent API",
     description="Backend API for the Autonomous E-Commerce Repricer",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS middleware — browsers block JavaScript from calling APIs
