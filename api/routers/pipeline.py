@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import os
+import time
 from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -18,8 +19,8 @@ def get_status():
     return pipeline_status
 
 
-@router.post("/run")
-async def run_pipeline():
+@router.get("/run")
+def run_pipeline():
     """
     Triggers a full pipeline run and streams log output
     back to the frontend line by line using Server-Sent Events.
@@ -32,7 +33,7 @@ async def run_pipeline():
     if pipeline_status["running"]:
         return {"error": "Pipeline is already running."}
 
-    async def stream():
+    def stream():
         pipeline_status["running"] = True
 
         try:
@@ -52,7 +53,7 @@ async def run_pipeline():
 
             for line in buffer.getvalue().splitlines():
                 yield f"data: {line}\n\n"
-                await asyncio.sleep(0.03)
+                time.sleep(0.03)
 
             pipeline_status["last_run"] = datetime.now().isoformat()
             yield "data: [DONE] Pipeline complete.\n\n"
