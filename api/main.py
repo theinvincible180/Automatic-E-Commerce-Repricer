@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from api.scheduler import start_scheduler, stop_scheduler
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers import products, prices, pipeline
+from api.routers import auth, products, prices, pipeline
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,6 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(products.router)
 app.include_router(prices.router)
 app.include_router(pipeline.router)
