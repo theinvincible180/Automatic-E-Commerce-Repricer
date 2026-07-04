@@ -1,15 +1,13 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 from api.dependencies import get_db
+from api.auth import get_current_user
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
 
 # ── Pydantic models ──────────────────────────────────────────
-# These define the exact shape of data FastAPI expects in
-# request bodies. FastAPI auto-validates and returns clear
-# errors if data is wrong or missing.
 
 class CompetitorURLIn(BaseModel):
     competitor_name: str
@@ -37,10 +35,10 @@ class ProductUpdate(BaseModel):
 # ── Endpoints ────────────────────────────────────────────────
 
 @router.get("/")
-def get_all_products():
+def get_all_products(user: dict = Depends(get_current_user)):
     """
-    Returns all products with their latest competitor prices.
-    Main data source for the dashboard overview page.
+    Returns all products belonging to the logged-in user,
+    with their latest competitor prices attached.
     """
     conn = get_db()
     cur = conn.cursor()
@@ -49,15 +47,15 @@ def get_all_products():
         SELECT id, name, sku, our_cost, min_margin_percent,
                max_price, current_price, created_at
         FROM products
+        WHERE user_id = %s
         ORDER BY name
-    """)
+    """, (user["user_id"],))
     products = cur.fetchall()
 
     result = []
     for product in products:
         product = dict(product)
 
-        # Get latest price from each competitor for this product
         cur.execute("""
             SELECT DISTINCT ON (competitor_name)
                 competitor_name, scraped_price, scraped_at
@@ -80,19 +78,21 @@ def get_all_products():
 
 
 @router.get("/{product_id}")
-def get_product(product_id: int):
-    """Returns a single product with competitor URLs."""
+def get_product(product_id: int, user: dict = Depends(get_current_user)):
+    """Returns a single product with competitor URLs, scoped to this user."""
     conn = get_db()
     cur = conn.cursor()
 
     cur.execute("""
         SELECT id, name, sku, our_cost, min_margin_percent,
                max_price, current_price, created_at
-        FROM products WHERE id = %s
-    """, (product_id,))
+        FROM products WHERE id = %s AND user_id = %s
+    """, (product_id, user["user_id"]))
 
     product = cur.fetchone()
     if not product:
+        cur.close()
+        conn.close()
         raise HTTPException(status_code=404, detail="Product not found.")
 
     product = dict(product)
@@ -112,23 +112,21 @@ def get_product(product_id: int):
 
 
 @router.post("/", status_code=201)
-def create_product(data: ProductCreate):
-    """
-    Creates a new product and its competitor URLs atomically.
-    RETURNING id gives us the new row's ID without a second query.
-    """
+def create_product(data: ProductCreate, user: dict = Depends(get_current_user)):
+    """Creates a new product owned by the logged-in user."""
     conn = get_db()
     cur = conn.cursor()
 
     try:
         cur.execute("""
             INSERT INTO products
-                (name, sku, our_cost, min_margin_percent, max_price, current_price)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (name, sku, our_cost, min_margin_percent, max_price, current_price, user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
             data.name, data.sku, data.our_cost,
-            data.min_margin_percent, data.max_price, data.current_price
+            data.min_margin_percent, data.max_price, data.current_price,
+            user["user_id"]
         ))
         new_id = cur.fetchone()["id"]
 
@@ -151,29 +149,27 @@ def create_product(data: ProductCreate):
 
 
 @router.patch("/{product_id}")
-def update_product(product_id: int, data: ProductUpdate):
-    """
-    Partial update — only fields that are sent get updated.
-    PATCH = update some fields.
-    PUT   = replace the whole record.
-    We use PATCH so frontend can send just one changed field.
-    """
+def update_product(product_id: int, data: ProductUpdate,
+                    user: dict = Depends(get_current_user)):
+    """Partial update — only fields that are sent get updated. Scoped to owner."""
     fields = {k: v for k, v in data.model_dump().items() if v is not None}
 
     if not fields:
         raise HTTPException(status_code=400, detail="No fields provided.")
 
     set_clause = ", ".join(f"{k} = %s" for k in fields)
-    values = list(fields.values()) + [product_id]
+    values = list(fields.values()) + [product_id, user["user_id"]]
 
     conn = get_db()
     cur = conn.cursor()
 
     cur.execute(
-        f"UPDATE products SET {set_clause} WHERE id = %s RETURNING id",
+        f"UPDATE products SET {set_clause} WHERE id = %s AND user_id = %s RETURNING id",
         values
     )
     if not cur.fetchone():
+        cur.close()
+        conn.close()
         raise HTTPException(status_code=404, detail="Product not found.")
 
     conn.commit()
@@ -183,20 +179,22 @@ def update_product(product_id: int, data: ProductUpdate):
 
 
 @router.delete("/{product_id}")
-def delete_product(product_id: int):
+def delete_product(product_id: int, user: dict = Depends(get_current_user)):
     """
-    Deletes a product. ON DELETE CASCADE in the schema
-    automatically deletes all related competitor_prices,
-    competitor_urls, and price_history rows too.
+    Deletes a product owned by the logged-in user.
+    ON DELETE CASCADE in the schema automatically deletes all related
+    competitor_prices, competitor_urls, and price_history rows too.
     """
     conn = get_db()
     cur = conn.cursor()
 
     cur.execute(
-        "DELETE FROM products WHERE id = %s RETURNING id",
-        (product_id,)
+        "DELETE FROM products WHERE id = %s AND user_id = %s RETURNING id",
+        (product_id, user["user_id"])
     )
     if not cur.fetchone():
+        cur.close()
+        conn.close()
         raise HTTPException(status_code=404, detail="Product not found.")
 
     conn.commit()
@@ -206,10 +204,18 @@ def delete_product(product_id: int):
 
 
 @router.post("/{product_id}/competitor-urls", status_code=201)
-def add_competitor_url(product_id: int, data: CompetitorURLIn):
-    """Adds a new competitor URL to an existing product."""
+def add_competitor_url(product_id: int, data: CompetitorURLIn,
+                        user: dict = Depends(get_current_user)):
+    """Adds a new competitor URL to an existing product owned by this user."""
     conn = get_db()
     cur = conn.cursor()
+
+    cur.execute("SELECT id FROM products WHERE id = %s AND user_id = %s",
+                (product_id, user["user_id"]))
+    if not cur.fetchone():
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Product not found.")
 
     cur.execute("""
         INSERT INTO competitor_urls (product_id, competitor_name, url)
@@ -224,16 +230,21 @@ def add_competitor_url(product_id: int, data: CompetitorURLIn):
 
 
 @router.delete("/competitor-urls/{url_id}")
-def delete_competitor_url(url_id: int):
-    """Removes a competitor URL by its ID."""
+def delete_competitor_url(url_id: int, user: dict = Depends(get_current_user)):
+    """Removes a competitor URL by its ID, only if it belongs to this user's product."""
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute(
-        "DELETE FROM competitor_urls WHERE id = %s RETURNING id",
-        (url_id,)
-    )
+    cur.execute("""
+        DELETE FROM competitor_urls
+        WHERE id = %s
+        AND product_id IN (SELECT id FROM products WHERE user_id = %s)
+        RETURNING id
+    """, (url_id, user["user_id"]))
+
     if not cur.fetchone():
+        cur.close()
+        conn.close()
         raise HTTPException(status_code=404, detail="URL not found.")
 
     conn.commit()

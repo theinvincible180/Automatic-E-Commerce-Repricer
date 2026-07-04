@@ -37,9 +37,9 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(data: dict) -> str:
     """
-    Builds a signed JWT containing the user's email (sub claim)
-    and an expiry time. The signature means the token can't be
-    tampered with without knowing SECRET_KEY.
+    Builds a signed JWT containing the user's email (sub claim),
+    user_id, and an expiry time. The signature means the token
+    can't be tampered with without knowing SECRET_KEY.
     """
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=EXPIRE_MINUTES)
@@ -54,22 +54,27 @@ credentials_exception = HTTPException(
 )
 
 
-def decode_token(token: str) -> str:
-    """Decodes a token and returns the user's email, or raises 401."""
+def decode_token(token: str) -> dict:
+    """
+    Decodes a token and returns {'email': ..., 'user_id': ...},
+    or raises 401 if invalid/expired/missing claims.
+    """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
-        if email is None:
+        user_id = payload.get("user_id")
+        if email is None or user_id is None:
             raise credentials_exception
-        return email
+        return {"email": email, "user_id": user_id}
     except JWTError:
         raise credentials_exception
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
+def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     """
-    Dependency to protect routes. Add `user: str = Depends(get_current_user)`
-    as a parameter on any endpoint and FastAPI will require a valid
-    Bearer token before the route body even runs.
+    Dependency to protect routes. Returns {'email': ..., 'user_id': ...}.
+    Add `user: dict = Depends(get_current_user)` as a parameter on any
+    endpoint and FastAPI will require a valid Bearer token before the
+    route body even runs.
     """
     return decode_token(token)

@@ -1,7 +1,8 @@
 import { Link, useLocation } from "react-router-dom";
 import {
-  LayoutDashboard, Package, Bell, Play, ChevronRight
+  LayoutDashboard, Package, Bell, Play, ChevronRight, LogOut
 } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
 
 const navItems = [
   { path: "/",         label: "Overview",   icon: LayoutDashboard },
@@ -12,6 +13,7 @@ const navItems = [
 
 export default function Layout({ children }) {
   const { pathname } = useLocation();
+  const { logout } = useAuth();
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
@@ -49,9 +51,15 @@ export default function Layout({ children }) {
           })}
         </nav>
 
-        <div style={{ padding: "16px 20px", borderTop: "1px solid #334155",
-          fontSize: 12, color: "#64748b" }}>
-          FastAPI + LangGraph
+        {/* Logout button replaces the old static footer text */}
+        <div style={{ padding: "16px 20px", borderTop: "1px solid #334155" }}>
+          <button onClick={logout} style={{
+            background: "transparent", color: "#94a3b8",
+            display: "flex", alignItems: "center", gap: 8,
+            width: "100%", padding: "8px 0", fontSize: 13,
+          }}>
+            <LogOut size={14} /> Log out
+          </button>
         </div>
       </aside>
 

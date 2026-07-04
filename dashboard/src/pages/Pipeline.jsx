@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Play, Square, Terminal } from "lucide-react";
-import { getPipelineLogs } from "../api"; // <-- Import the new API call
+import { streamPipeline } from "../api";
 
 export default function Pipeline() {
   const [running, setRunning] = useState(false);
@@ -9,50 +9,43 @@ export default function Pipeline() {
   const sourceRef = useRef(null);
   const logsEndRef = useRef(null);
 
-  // Fetch log history when the page loads
-  useEffect(() => {
-    getPipelineLogs().then(r => {
-      setLogs(r.data.logs);
-      // Scroll to bottom after loading history
-      setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-    });
-  }, []);
-
   const startPipeline = () => {
+    setLogs([]);
     setDone(false);
     setRunning(true);
-    
-    // Notice we removed setLogs([]) here so it doesn't erase history!
-    
-    const source = new EventSource("http://localhost:8000/pipeline/run");
-    sourceRef.current = source;
 
-    source.onmessage = (e) => {
-      if (e.data.startsWith("[DONE]")) {
+    // streamPipeline (from api.js) builds the EventSource URL with
+    // the JWT token attached as a query param, since EventSource
+    // can't send Authorization headers.
+    const source = streamPipeline(
+      // onMessage — called for every normal log line
+      (line) => {
+        setLogs(prev => [...prev, { text: line, type: "log" }]);
+        setTimeout(() => logsEndRef.current?.scrollIntoView(
+          { behavior: "smooth" }
+        ), 50);
+      },
+      // onDone — called when the backend sends [DONE]
+      () => {
         setDone(true);
         setRunning(false);
-        source.close();
-      } else if (e.data.startsWith("[ERROR]")) {
-        setLogs(prev => [...prev, { text: e.data, type: "error" }]);
+      },
+      // onError — called for [ERROR] lines or connection failures
+      (errMsg) => {
+        setLogs(prev => [...prev, { text: errMsg, type: "error" }]);
         setRunning(false);
-        source.close();
-      } else {
-        setLogs(prev => [...prev, { text: e.data, type: "log" }]);
-        setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       }
-    };
+    );
 
-    source.onerror = () => {
-      setLogs(prev => [...prev, { text: "Connection error.", type: "error" }]);
-      setRunning(false);
-      source.close();
-    };
+    sourceRef.current = source;
   };
 
   const stopPipeline = () => {
     sourceRef.current?.close();
     setRunning(false);
-    setLogs(prev => [...prev, { text: "Pipeline stopped by user.", type: "error" }]);
+    setLogs(prev => [...prev, {
+      text: "Pipeline stopped by user.", type: "error"
+    }]);
   };
 
   return (
@@ -61,7 +54,7 @@ export default function Pipeline() {
         Pipeline Control
       </h1>
       <p style={{ color: "#64748b", marginBottom: 28 }}>
-        Monitor automated background runs or manually trigger the pipeline
+        Manually trigger the full repricing pipeline
       </p>
 
       {/* Control panel */}
@@ -78,14 +71,18 @@ export default function Pipeline() {
             display: "flex", alignItems: "center", gap: 8,
             fontSize: 15,
           }}>
-          {running ? <><Square size={16} /> Stop</> : <><Play size={16} /> Run Manual Override</>}
+          {running ? <><Square size={16} /> Stop</> : <><Play size={16} /> Run Pipeline</>}
         </button>
 
         {done && (
-          <span style={{ color: "#22c55e", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-            ✓ Last run completed successfully
+          <span style={{
+            color: "#22c55e", fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 6
+          }}>
+            ✓ Pipeline completed successfully
           </span>
         )}
+
         {running && (
           <span style={{ color: "#f59e0b", fontWeight: 500 }}>
             ⟳ Running...
@@ -94,32 +91,35 @@ export default function Pipeline() {
       </div>
 
       {/* Live log terminal */}
-      <div style={{
-        background: "#0f172a", borderRadius: 12,
-        padding: 24, minHeight: 400,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, color: "#94a3b8" }}>
-          <Terminal size={16} />
-          <span style={{ fontSize: 13, fontFamily: "monospace" }}>
-            System Event Log (History & Live)
-          </span>
+      {logs.length > 0 && (
+        <div style={{
+          background: "#0f172a", borderRadius: 12,
+          padding: 24, minHeight: 300,
+        }}>
+          <div style={{ display: "flex", alignItems: "center",
+            gap: 8, marginBottom: 16, color: "#94a3b8" }}>
+            <Terminal size={16} />
+            <span style={{ fontSize: 13, fontFamily: "monospace" }}>
+              Pipeline output
+            </span>
+          </div>
+          <div style={{ fontFamily: "monospace", fontSize: 13,
+            lineHeight: 1.7, maxHeight: 480, overflowY: "auto" }}>
+            {logs.map((log, i) => (
+              <div key={i} style={{
+                color: log.type === "error" ? "#f87171"
+                  : log.text.includes("✓") || log.text.includes("Saved")
+                    ? "#86efac"
+                    : "#e2e8f0",
+                padding: "1px 0",
+              }}>
+                {log.text}
+              </div>
+            ))}
+            <div ref={logsEndRef} />
+          </div>
         </div>
-
-        <div style={{ fontFamily: "monospace", fontSize: 13, lineHeight: 1.7, maxHeight: 500, overflowY: "auto" }}>
-          {logs.map((log, i) => (
-            <div key={i} style={{
-              color: log.type === "error" || log.text.includes("❌") ? "#f87171"
-                : log.text.includes("✅") || log.text.includes("Saved") ? "#86efac"
-                : log.text.includes("⏰") || log.text.includes("🚀") ? "#60a5fa"
-                : "#e2e8f0",
-              padding: "2px 0",
-            }}>
-              {log.text}
-            </div>
-          ))}
-          <div ref={logsEndRef} />
-        </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -1,10 +1,44 @@
 import axios from "axios";
 
-// Base URL for all API calls — points to your FastAPI server
 const api = axios.create({
   baseURL: "http://localhost:8000",
   headers: { "Content-Type": "application/json" },
 });
+
+// Attach the token to every outgoing request automatically
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("access_token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// If any request comes back 401, the token is invalid/expired — log the user out
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem("access_token");
+      window.location.href = "/login";
+    }
+    return Promise.reject(error);
+  }
+);
+
+// ── Auth ────────────────────────────────────────────────────
+export const registerUser = (email, password) =>
+  api.post("/auth/register", { email, password });
+
+export const loginUser = (email, password) => {
+  // Backend expects form data, not JSON, for OAuth2PasswordRequestForm
+  const form = new URLSearchParams();
+  form.append("username", email);
+  form.append("password", password);
+  return axios.post("http://localhost:8000/auth/login", form, {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+};
 
 // ── Products ────────────────────────────────────────────────
 export const getProducts = () => api.get("/products/");
@@ -31,15 +65,19 @@ export const getAlerts = (threshold = 10) =>
 
 // ── Pipeline ────────────────────────────────────────────────
 export const getPipelineStatus = () => api.get("/pipeline/status");
+export const getPipelineLogs = (lines = 200) => api.get(`/pipeline/logs?lines=${lines}`);
 
-// SSE stream for live pipeline logs — returns an EventSource
-// EventSource is the browser's built-in SSE client
+// SSE can't send headers, so the token goes in the query string instead
 export const streamPipeline = (onMessage, onDone, onError) => {
-  const source = new EventSource("http://localhost:8000/pipeline/run");
-  
+  const token = localStorage.getItem("access_token");
+  const source = new EventSource(`http://localhost:8000/pipeline/run?token=${token}`);
+
   source.onmessage = (e) => {
-    if (e.data === "[DONE] Pipeline complete.") {
+    if (e.data.startsWith("[DONE]")) {
       onDone();
+      source.close();
+    } else if (e.data.startsWith("[ERROR]")) {
+      onError(e.data);
       source.close();
     } else {
       onMessage(e.data);
@@ -47,12 +85,11 @@ export const streamPipeline = (onMessage, onDone, onError) => {
   };
 
   source.onerror = (e) => {
-    onError(e);
+    onError("Connection error.");
     source.close();
   };
 
-  return source; // return so caller can close it if needed
+  return source;
 };
 
 export default api;
-export const getPipelineLogs = () => api.get("/pipeline/logs");
