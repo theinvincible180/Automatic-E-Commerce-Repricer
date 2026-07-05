@@ -1,7 +1,11 @@
 import axios from "axios";
 
+// Uses the deployed Render URL in production (set via Vercel env var),
+// falls back to localhost for local development
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
 const api = axios.create({
-  baseURL: "http://localhost:8000",
+  baseURL: BASE_URL,
   headers: { "Content-Type": "application/json" },
 });
 
@@ -31,11 +35,10 @@ export const registerUser = (email, password) =>
   api.post("/auth/register", { email, password });
 
 export const loginUser = (email, password) => {
-  // Backend expects form data, not JSON, for OAuth2PasswordRequestForm
   const form = new URLSearchParams();
   form.append("username", email);
   form.append("password", password);
-  return axios.post("http://localhost:8000/auth/login", form, {
+  return axios.post(`${BASE_URL}/auth/login`, form, {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
   });
 };
@@ -63,14 +66,12 @@ export const getCompetitorPriceHistory = (productId, limit = 100) =>
 export const getAlerts = (threshold = 10) =>
   api.get(`/alerts?threshold_percent=${threshold}`);
 
-// ── Pipeline ────────────────────────────────────────────────
 export const getPipelineStatus = () => api.get("/pipeline/status");
 export const getPipelineLogs = (lines = 200) => api.get(`/pipeline/logs?lines=${lines}`);
 
-// SSE can't send headers, so the token goes in the query string instead
 export const streamPipeline = (onMessage, onDone, onError) => {
   const token = localStorage.getItem("access_token");
-  const source = new EventSource(`http://localhost:8000/pipeline/run?token=${token}`);
+  const source = new EventSource(`${BASE_URL}/pipeline/run?token=${token}`);
 
   source.onmessage = (e) => {
     if (e.data.startsWith("[DONE]")) {
@@ -84,12 +85,17 @@ export const streamPipeline = (onMessage, onDone, onError) => {
     }
   };
 
-  source.onerror = (e) => {
+  source.onerror = () => {
     onError("Connection error.");
     source.close();
   };
 
   return source;
 };
+
+export const getSchedulerStatus = () => api.get("/scheduler/status");
+export const setSchedulerInterval = (hours) => api.post("/scheduler/interval", { hours });
+export const pauseScheduler = () => api.post("/scheduler/pause");
+export const resumeScheduler = () => api.post("/scheduler/resume");
 
 export default api;
