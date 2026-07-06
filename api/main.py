@@ -24,9 +24,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",   # Vite dev server
-        "http://localhost:3000", 
-        "https://automatic-e-commerce-repricer.vercel.app/"  # fallback
+        "http://localhost:5173",   # Vite dev server 
+        "https://automatic-e-commerce-repricer.vercel.app"  # fallback
     ],
     allow_credentials=True,
     allow_methods=["*"],
